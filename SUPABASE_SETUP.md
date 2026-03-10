@@ -1,0 +1,163 @@
+# Supabase Setup Guide
+
+To get this FinBoom clone working, you need to set up a Supabase project and create the following table.
+
+## 1. Database Setup
+
+Run this SQL in your Supabase SQL Editor. This script is safe to run multiple times.
+
+```sql
+-- 1. Create assets table if it doesn't exist
+create table if not exists assets (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users not null,
+  name text not null,
+  type text not null,
+  value numeric not null, -- Current Value
+  invested_value numeric default 0, -- For Stocks/Mutual Funds
+  currency text default 'INR',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable Row Level Security for assets
+alter table assets enable row level security;
+
+-- Create policies for assets (safe to run multiple times)
+do $$ 
+begin
+  -- Add invested_value column if it doesn't exist (for existing tables)
+  if not exists (select 1 from information_schema.columns where table_name = 'assets' and column_name = 'invested_value') then
+    alter table assets add column invested_value numeric default 0;
+  end if;
+
+  if not exists (select 1 from pg_policies where tablename = 'assets' and policyname = 'Users can view their own assets') then
+    create policy "Users can view their own assets" on assets for select using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'assets' and policyname = 'Users can insert their own assets') then
+    create policy "Users can insert their own assets" on assets for insert with check ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'assets' and policyname = 'Users can update their own assets') then
+    create policy "Users can update their own assets" on assets for update using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'assets' and policyname = 'Users can delete their own assets') then
+    create policy "Users can delete their own assets" on assets for delete using ( auth.uid() = user_id );
+  end if;
+end $$;
+
+-- 2. Create categories table
+create table if not exists categories (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users not null,
+  name text not null,
+  type text not null, -- 'Income', 'Expense'
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable Row Level Security for categories
+alter table categories enable row level security;
+
+-- Create policies for categories
+do $$ 
+begin
+  if not exists (select 1 from pg_policies where tablename = 'categories' and policyname = 'Users can view their own categories') then
+    create policy "Users can view their own categories" on categories for select using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'categories' and policyname = 'Users can insert their own categories') then
+    create policy "Users can insert their own categories" on categories for insert with check ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'categories' and policyname = 'Users can delete their own categories') then
+    create policy "Users can delete their own categories" on categories for delete using ( auth.uid() = user_id );
+  end if;
+end $$;
+
+-- 3. Create investments table
+create table if not exists investments (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users not null,
+  name text not null,
+  ticker text,
+  type text not null, -- 'Stock', 'Mutual Fund'
+  quantity numeric default 0,
+  buy_price numeric default 0,
+  current_price numeric default 0,
+  invested_value numeric not null,
+  current_value numeric not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable Row Level Security for investments
+alter table investments enable row level security;
+
+-- Create policies for investments
+do $$ 
+begin
+  -- Add new columns if they don't exist
+  if not exists (select 1 from information_schema.columns where table_name = 'investments' and column_name = 'ticker') then
+    alter table investments add column ticker text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name = 'investments' and column_name = 'quantity') then
+    alter table investments add column quantity numeric default 0;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name = 'investments' and column_name = 'buy_price') then
+    alter table investments add column buy_price numeric default 0;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name = 'investments' and column_name = 'current_price') then
+    alter table investments add column current_price numeric default 0;
+  end if;
+
+  if not exists (select 1 from pg_policies where tablename = 'investments' and policyname = 'Users can view their own investments') then
+    create policy "Users can view their own investments" on investments for select using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'investments' and policyname = 'Users can insert their own investments') then
+    create policy "Users can insert their own investments" on investments for insert with check ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'investments' and policyname = 'Users can update their own investments') then
+    create policy "Users can update their own investments" on investments for update using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'investments' and policyname = 'Users can delete their own investments') then
+    create policy "Users can delete their own investments" on investments for delete using ( auth.uid() = user_id );
+  end if;
+end $$;
+
+-- 4. Create transactions table if it doesn't exist
+create table if not exists transactions (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users not null,
+  asset_id uuid references assets not null,
+  to_asset_id uuid references assets, -- For transfers
+  amount numeric not null,
+  type text not null, -- 'Income', 'Expense', 'Transfer'
+  category text not null,
+  description text,
+  date date default current_date not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable Row Level Security for transactions
+alter table transactions enable row level security;
+
+-- Create policies for transactions (safe to run multiple times)
+do $$ 
+begin
+  if not exists (select 1 from pg_policies where tablename = 'transactions' and policyname = 'Users can view their own transactions') then
+    create policy "Users can view their own transactions" on transactions for select using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'transactions' and policyname = 'Users can insert their own transactions') then
+    create policy "Users can insert their own transactions" on transactions for insert with check ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'transactions' and policyname = 'Users can update their own transactions') then
+    create policy "Users can update their own transactions" on transactions for update using ( auth.uid() = user_id );
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'transactions' and policyname = 'Users can delete their own transactions') then
+    create policy "Users can delete their own transactions" on transactions for delete using ( auth.uid() = user_id );
+  end if;
+end $$;
+```
+## 2. Environment Variables
+
+Add these to your `.env` file (or AI Studio Secrets):
+
+- `SUPABASE_URL`: Your project URL
+- `SUPABASE_ANON_KEY`: Your project's anonymous public key
