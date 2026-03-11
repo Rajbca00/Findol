@@ -1,36 +1,34 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  MoreVertical, 
-  Trash2, 
+import React, { useEffect, useState } from 'react';
+import {
+  Plus,
+  Search,
+  Filter,
+  Trash2,
   Edit2,
-  TrendingUp,
-  TrendingDown,
   Wallet,
   Building2,
   Coins,
   Banknote,
   Briefcase,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { Asset, AssetType } from '../types';
-import { motion, AnimatePresence } from 'motion/react';
 
 const ASSET_TYPES: AssetType[] = [
-  'Real Estate', 
-  'Gold', 
-  'Cash', 
-  'Crypto', 
-  'Fixed Deposit', 
-  'PF/EPF', 
+  'Real Estate',
+  'Gold',
+  'Cash',
+  'Crypto',
+  'Fixed Deposit',
+  'PF/EPF',
   'Savings Account',
   'Other'
 ];
 
-const TYPE_ICONS: Record<string, any> = {
+const TYPE_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   'Real Estate': Building2,
   'Gold': Coins,
   'Cash': Banknote,
@@ -38,7 +36,14 @@ const TYPE_ICONS: Record<string, any> = {
   'Fixed Deposit': Banknote,
   'PF/EPF': Briefcase,
   'Savings Account': Banknote,
-  'Other': Wallet,
+  'Other': Wallet
+};
+
+type AssetTransaction = {
+  asset_id: string;
+  to_asset_id?: string | null;
+  amount: number;
+  type: 'Income' | 'Expense' | 'Transfer';
 };
 
 export default function Assets() {
@@ -46,15 +51,16 @@ export default function Assets() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // Form state
+
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [name, setName] = useState('');
   const [type, setType] = useState<AssetType>('Savings Account');
+  const [initialValue, setInitialValue] = useState('');
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [refreshingAssetIds, setRefreshingAssetIds] = useState<string[]>([]);
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
-  // Delete confirmation state
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,9 +73,9 @@ export default function Assets() {
         .from('assets')
         .select('*')
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
-      setAssets(data || []);
+      setAssets((data || []) as Asset[]);
     } catch (error) {
       console.error('Error fetching assets:', error);
     } finally {
@@ -77,23 +83,82 @@ export default function Assets() {
     }
   };
 
+  const calculateAssetCurrentValue = (asset: Asset, transactions: AssetTransaction[]) => {
+    return transactions.reduce((currentValue, transaction) => {
+      if (transaction.asset_id === asset.id) {
+        if (transaction.type === 'Income') return currentValue + transaction.amount;
+        return currentValue - transaction.amount;
+      }
+
+      if (transaction.type === 'Transfer' && transaction.to_asset_id === asset.id) {
+        return currentValue + transaction.amount;
+      }
+
+      return currentValue;
+    }, asset.initial_value);
+  };
+
+  const refreshAssetBalances = async (assetIds?: string[]) => {
+    const targetAssets = assetIds?.length
+      ? assets.filter((asset) => assetIds.includes(asset.id))
+      : assets;
+
+    if (targetAssets.length === 0) return;
+
+    if (assetIds?.length) setRefreshingAssetIds(assetIds);
+    else setRefreshingAll(true);
+
+    try {
+      const { data: transactions, error: transactionsError } = await supabase
+        .from('transactions')
+        .select('asset_id, to_asset_id, amount, type');
+
+      if (transactionsError) throw transactionsError;
+
+      await Promise.all(
+        targetAssets.map((asset) => (
+          supabase
+            .from('assets')
+            .update({
+              value: calculateAssetCurrentValue(asset, (transactions || []) as AssetTransaction[]),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', asset.id)
+        ))
+      );
+
+      await fetchAssets();
+    } catch (error) {
+      console.error('Error refreshing asset balances:', error);
+      alert('Error refreshing balances. Please try again.');
+    } finally {
+      setRefreshingAssetIds([]);
+      setRefreshingAll(false);
+    }
+  };
+
   const handleSaveAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user }
+      } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
+
+      const payload = {
+        name,
+        type,
+        initial_value: parseFloat(initialValue),
+        value: parseFloat(value),
+        updated_at: new Date().toISOString()
+      };
 
       if (editingAsset) {
         const { error } = await supabase
           .from('assets')
-          .update({
-            name,
-            type,
-            value: parseFloat(value),
-            updated_at: new Date().toISOString()
-          })
+          .update(payload)
           .eq('id', editingAsset.id);
         if (error) throw error;
       } else {
@@ -102,6 +167,7 @@ export default function Assets() {
             user_id: user.id,
             name,
             type,
+            initial_value: parseFloat(initialValue),
             value: parseFloat(value),
             currency: 'INR'
           }
@@ -124,6 +190,7 @@ export default function Assets() {
     setEditingAsset(null);
     setName('');
     setType('Savings Account');
+    setInitialValue('');
     setValue('');
   };
 
@@ -131,6 +198,7 @@ export default function Assets() {
     setEditingAsset(asset);
     setName(asset.name);
     setType(asset.type);
+    setInitialValue(asset.initial_value.toString());
     setValue(asset.value.toString());
     setIsModalOpen(true);
   };
@@ -148,10 +216,10 @@ export default function Assets() {
     }
   };
 
-  const filteredAssets = assets.filter(asset => 
-    asset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    asset.type.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAssets = assets.filter((asset) => (
+    asset.name.toLowerCase().includes(searchTerm.toLowerCase())
+    || asset.type.toLowerCase().includes(searchTerm.toLowerCase())
+  ));
 
   return (
     <div className="space-y-6">
@@ -160,20 +228,29 @@ export default function Assets() {
           <h1 className="text-3xl font-display font-bold text-zinc-900">Assets</h1>
           <p className="text-zinc-500">Manage your investments and holdings.</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
-        >
-          <Plus size={20} />
-          Add New Asset
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => refreshAssetBalances()}
+            disabled={refreshingAll || refreshingAssetIds.length > 0 || loading}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-xl text-zinc-600 hover:bg-zinc-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={refreshingAll ? 'animate-spin' : ''} size={18} />
+            Refresh Balances
+          </button>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+          >
+            <Plus size={20} />
+            Add New Asset
+          </button>
+        </div>
       </div>
 
-      {/* Filters & Search */}
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
+          <input
             type="text"
             placeholder="Search assets..."
             value={searchTerm}
@@ -187,7 +264,6 @@ export default function Assets() {
         </button>
       </div>
 
-      {/* Assets Grid */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="animate-spin text-emerald-600" size={32} />
@@ -197,6 +273,8 @@ export default function Assets() {
           <AnimatePresence>
             {filteredAssets.map((asset) => {
               const Icon = TYPE_ICONS[asset.type] || Wallet;
+              const isRefreshingAsset = refreshingAssetIds.includes(asset.id);
+
               return (
                 <motion.div
                   key={asset.id}
@@ -211,7 +289,17 @@ export default function Assets() {
                       <Icon size={24} />
                     </div>
                     <div className="flex gap-1">
-                      <button 
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          refreshAssetBalances([asset.id]);
+                        }}
+                        disabled={refreshingAll || isRefreshingAsset}
+                        className="p-2 text-slate-400 hover:text-emerald-600 transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw className={isRefreshingAsset ? 'animate-spin' : ''} size={16} />
+                      </button>
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           openEditModal(asset);
@@ -220,7 +308,7 @@ export default function Assets() {
                       >
                         <Edit2 size={16} />
                       </button>
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setDeletingId(asset.id);
@@ -234,10 +322,15 @@ export default function Assets() {
                   <div>
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{asset.type}</span>
                     <h3 className="text-lg font-display font-bold text-slate-900 mt-1">{asset.name}</h3>
-                    <div className="mt-2">
-                      <p className="text-2xl font-display font-bold text-blue-600">
-                        ₹{asset.value.toLocaleString('en-IN')}
-                      </p>
+                    <div className="mt-3 space-y-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-slate-400">Initial Balance</p>
+                        <p className="text-base font-semibold text-slate-700">Rs{asset.initial_value.toLocaleString('en-IN')}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-slate-400">Current Balance</p>
+                        <p className="text-2xl font-display font-bold text-blue-600">Rs{asset.value.toLocaleString('en-IN')}</p>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -252,7 +345,7 @@ export default function Assets() {
           </div>
           <h3 className="text-lg font-display font-bold text-zinc-900">No assets found</h3>
           <p className="text-zinc-500 mt-1">Start by adding your first investment or account.</p>
-          <button 
+          <button
             onClick={() => {
               resetForm();
               setIsModalOpen(true);
@@ -265,21 +358,20 @@ export default function Assets() {
         </div>
       )}
 
-      {/* Add Asset Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
           >
             <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
               <h2 className="text-xl font-display font-bold">{editingAsset ? 'Edit Asset' : 'Add New Asset'}</h2>
-              <button 
+              <button
                 onClick={() => {
                   setIsModalOpen(false);
                   resetForm();
-                }} 
+                }}
                 className="text-zinc-400 hover:text-zinc-900"
               >
                 <Plus className="rotate-45" size={24} />
@@ -288,7 +380,7 @@ export default function Assets() {
             <form onSubmit={handleSaveAsset} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-zinc-700 mb-1">Asset Name</label>
-                <input 
+                <input
                   type="text"
                   required
                   value={name}
@@ -299,29 +391,45 @@ export default function Assets() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-zinc-700 mb-1">Asset Type</label>
-                <select 
+                <select
                   value={type}
                   onChange={(e) => setType(e.target.value as AssetType)}
                   className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                 >
-                  {ASSET_TYPES.map(t => (
-                    <option key={t} value={t}>{t}</option>
+                  {ASSET_TYPES.map((assetType) => (
+                    <option key={assetType} value={assetType}>{assetType}</option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Current Value (₹)</label>
-                <input 
-                  type="number"
-                  required
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Initial Balance (Rs)</label>
+                  <input
+                    type="number"
+                    required
+                    value={initialValue}
+                    onChange={(e) => setInitialValue(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Current Balance (Rs)</label>
+                  <input
+                    type="number"
+                    required
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                Use refresh to recalculate current balance from opening balance and all transactions for the account.
               </div>
               <div className="pt-4 flex gap-3">
-                <button 
+                <button
                   type="button"
                   onClick={() => {
                     setIsModalOpen(false);
@@ -331,7 +439,7 @@ export default function Assets() {
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   type="submit"
                   disabled={submitting}
                   className="flex-1 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
@@ -344,10 +452,9 @@ export default function Assets() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
       {deletingId && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center"
@@ -358,13 +465,13 @@ export default function Assets() {
             <h3 className="text-xl font-display font-bold text-slate-900">Delete Asset?</h3>
             <p className="text-slate-500 mt-2">This action cannot be undone. All data associated with this asset will be lost.</p>
             <div className="grid grid-cols-2 gap-3 mt-6">
-              <button 
+              <button
                 onClick={() => setDeletingId(null)}
                 className="py-2 border border-slate-200 text-slate-600 font-semibold rounded-lg hover:bg-slate-50 transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={() => deleteAsset(deletingId)}
                 className="py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors"
               >

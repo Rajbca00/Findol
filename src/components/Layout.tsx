@@ -5,6 +5,7 @@ import {
   Wallet, 
   ArrowRightLeft,
   Briefcase,
+  Landmark,
   PieChart, 
   Settings, 
   LogOut, 
@@ -13,6 +14,7 @@ import {
   X
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import FinancialCopilot from './FinancialCopilot';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -29,6 +31,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { icon: Wallet, label: 'Assets', path: '/assets' },
     { icon: ArrowRightLeft, label: 'Transactions', path: '/transactions' },
     { icon: Briefcase, label: 'Portfolio', path: '/portfolio' },
+    { icon: Landmark, label: 'Loans', path: '/loans' },
     { icon: PieChart, label: 'Analytics', path: '/analytics' },
     { icon: Settings, label: 'Settings', path: '/settings' },
   ];
@@ -127,6 +130,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+
+      <FinancialCopilot />
     </div>
   );
 }

@@ -4,6 +4,8 @@ import YahooFinance from 'yahoo-finance2';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 
+// Match local frontend conventions: load .env.local first, then fall back to .env.
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 const getApiKey = () => {
@@ -12,6 +14,16 @@ const getApiKey = () => {
     console.warn("WARNING: No Gemini API key found in environment variables (GEMINI_API_KEY or API_KEY)");
   }
   return key || "";
+};
+
+const parseJsonSafely = (value: string) => {
+  if (!value || !value.trim()) return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 };
 
 const yahooFinance = new YahooFinance();
@@ -149,6 +161,54 @@ async function startServer() {
     } catch (error) {
       console.error("Error fetching prices:", error);
       res.status(500).json({ error: "Failed to fetch prices" });
+    }
+  });
+
+  app.post("/api/financial-chat", async (req, res) => {
+    const { messages, context } = req.body as {
+      messages?: Array<{ role: "user" | "assistant"; content: string }>;
+      context?: unknown;
+    };
+
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "Messages are required" });
+    }
+
+    try {
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        throw new Error("Gemini API key is missing. Please configure GEMINI_API_KEY in environment.");
+      }
+      const recentTranscript = messages
+        .slice(-10)
+        .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content}`)
+        .join("\n\n");
+      const ai = new GoogleGenAI({ apiKey });
+
+      const prompt = [
+        "You are FinDol Copilot, an in-app financial assistant.",
+        "Use the provided user financial context when relevant.",
+        "Give practical, concise guidance in plain language.",
+        "Do not claim certainty about future returns or market direction.",
+        "Do not present yourself as a licensed financial advisor.",
+        "For high-risk decisions, include a short caution and note key assumptions.",
+        "If the user asks about a loan, EMI, prepayment, cashflow, allocation, or investment choice, reason from their provided data first.",
+        "",
+        `User financial context:\n${JSON.stringify(context || {}, null, 2)}`,
+        recentTranscript ? `Recent conversation:\n${recentTranscript}` : "",
+        "Answer the user's latest request using the financial context and transcript above."
+      ].filter(Boolean).join("\n\n");
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-lite",
+        contents: prompt,
+      });
+      const reply = response.text?.trim() || "I could not generate a response.";
+
+      return res.json({ reply });
+    } catch (error: any) {
+      console.error("Error in financial chat:", error);
+      return res.status(500).json({ error: error.message || "Financial chat failed" });
     }
   });
 

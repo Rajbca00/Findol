@@ -13,6 +13,7 @@ export interface Asset {
   user_id: string;
   name: string;
   type: AssetType;
+  initial_value: number; // Opening Balance
   value: number; // Current Value
   invested_value?: number; // For Stocks/Mutual Funds
   currency: string;
@@ -39,6 +40,35 @@ export interface Investment {
   current_price: number;
   invested_value: number;
   current_value: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Loan {
+  id: string;
+  user_id: string;
+  name: string;
+  lender: string;
+  loan_amount: number;
+  interest_rate: number;
+  emi_amount: number;
+  start_date: string;
+  status: 'Active' | 'Closed';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanPayment {
+  id: string;
+  user_id: string;
+  loan_id: string;
+  month: string;
+  payment_date: string;
+  emi_amount: number;
+  principal_component: number;
+  interest_component: number;
+  prepayment_amount: number;
+  notes: string;
   created_at: string;
   updated_at: string;
 }

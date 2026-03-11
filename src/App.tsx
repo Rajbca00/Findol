@@ -8,6 +8,7 @@ import Transactions from './pages/Transactions';
 import Portfolio from './pages/Portfolio';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
+import Loans from './pages/Loans';
 import Layout from './components/Layout';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
 
@@ -139,6 +140,19 @@ export default function App() {
             session ? (
               <Layout>
                 <Portfolio />
+              </Layout>
+            ) : (
+              <Navigate to="/auth" />
+            )
+          } 
+        />
+
+        <Route 
+          path="/loans" 
+          element={
+            session ? (
+              <Layout>
+                <Loans />
               </Layout>
             ) : (
               <Navigate to="/auth" />
