@@ -396,15 +396,9 @@ export default function Transactions() {
           <p className="mt-2 text-sm text-slate-500">Balance at the start of {selectedMonth ? formatMonthLabel(selectedMonth) : 'this period'}.</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Income vs Expense</p>
-          <div className="mt-2 flex items-end justify-between gap-4">
-            <div>
-              <div className="text-sm text-emerald-600 font-semibold">+{formatCurrency(monthIncome)}</div>
-              <div className="text-sm text-red-600 font-semibold">-{formatCurrency(monthExpense)}</div>
-            </div>
-            <div className={`text-2xl font-display font-bold ${monthIncome - monthExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {monthIncome - monthExpense >= 0 ? '+' : '-'}{formatCurrency(monthIncome - monthExpense)}
-            </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">NET FLOW</p>
+          <div className={`mt-2 text-2xl font-display font-bold ${monthIncome - monthExpense >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {monthIncome - monthExpense >= 0 ? '+' : '-'}{formatCurrency(monthIncome - monthExpense)}
           </div>
           <p className="mt-2 text-sm text-slate-500">Net flow for the selected month.</p>
         </div>
@@ -588,9 +582,8 @@ export default function Transactions() {
                   <tr
                     key={transaction.id}
                     onClick={() => setSelectedTransactionId(transaction.id)}
-                    className={`cursor-pointer transition-colors group ${
-                      selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'
-                    }`}
+                    className={`cursor-pointer transition-colors group ${selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'
+                      }`}
                   >
                     <td className="px-4 py-4 text-sm text-slate-500 whitespace-nowrap">
                       {formatGroupDate(transaction.date)}
@@ -608,22 +601,20 @@ export default function Transactions() {
                       {transaction.type === 'Transfer' && ` -> ${getAssetName(transaction.to_asset_id)}`}
                     </td>
                     <td
-                      className={`px-4 py-4 text-right font-bold ${
-                        transaction.type === 'Income'
+                      className={`px-4 py-4 text-right font-bold ${transaction.type === 'Income'
                           ? 'text-emerald-600'
                           : transaction.type === 'Expense'
                             ? 'text-red-600'
                             : 'text-blue-600'
-                      }`}
+                        }`}
                     >
                       {transaction.type === 'Income' ? '+' : '-'}
                       Rs{transaction.amount.toLocaleString('en-IN')}
                     </td>
                     <td className="px-4 py-4 text-right">
                       <div
-                        className={`flex justify-end gap-1 transition-opacity ${
-                          selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'
-                        }`}
+                        className={`flex justify-end gap-1 transition-opacity ${selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'
+                          }`}
                       >
                         <button
                           type="button"
@@ -730,9 +721,8 @@ export default function Transactions() {
                   type="button"
                   key={transactionType}
                   onClick={() => setType(transactionType)}
-                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
-                    type === transactionType ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                  }`}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${type === transactionType ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
                 >
                   {transactionType}
                 </button>
