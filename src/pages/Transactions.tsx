@@ -7,15 +7,25 @@ import {
   Loader2,
   Edit2,
   Trash2,
-  Settings
+  Settings,
+  CalendarRange,
+  BarChart3
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip
+} from 'recharts';
 import { supabase } from '../lib/supabase';
 import { Asset, Category, Transaction, TransactionCategory } from '../types';
 
 const DEFAULT_CATEGORIES: string[] = [
   'Food', 'Rent', 'Shopping', 'Utilities', 'Transport', 'Investment', 'Income', 'Transfer', 'Other'
 ];
+const CHART_COLORS = ['#0f766e', '#f97316', '#2563eb', '#dc2626', '#7c3aed', '#ca8a04', '#059669', '#db2777'];
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -42,6 +52,7 @@ export default function Transactions() {
 
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -252,6 +263,10 @@ export default function Transactions() {
     month: 'short',
     year: 'numeric'
   });
+  const formatMonthLabel = (value: string) => new Date(`${value}-01`).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric'
+  });
   const scopedAssetIds = new Set(
     selectedAccountId ? [selectedAccountId] : assets.map((asset) => asset.id)
   );
@@ -272,13 +287,34 @@ export default function Transactions() {
     return impact;
   };
 
-  const filteredTransactions = transactions.filter((transaction) => {
+  const accountScopedTransactions = transactions.filter((transaction) => {
     const matchesAccount = !selectedAccountId
       || transaction.asset_id === selectedAccountId
       || transaction.to_asset_id === selectedAccountId;
 
-    if (!matchesAccount) return false;
+    return matchesAccount;
+  });
 
+  const availableMonthKeys = Array.from(
+    new Set(accountScopedTransactions.map((transaction) => transaction.date.slice(0, 7)))
+  ).sort((left, right) => right.localeCompare(left));
+
+  useEffect(() => {
+    if (availableMonthKeys.length === 0) {
+      if (selectedMonth) setSelectedMonth('');
+      return;
+    }
+
+    if (!selectedMonth || !availableMonthKeys.includes(selectedMonth)) {
+      setSelectedMonth(availableMonthKeys[0]);
+    }
+  }, [availableMonthKeys, selectedMonth]);
+
+  const monthTransactions = accountScopedTransactions.filter((transaction) => (
+    !selectedMonth || transaction.date.slice(0, 7) === selectedMonth
+  ));
+
+  const filteredTransactions = monthTransactions.filter((transaction) => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
 
@@ -291,39 +327,39 @@ export default function Transactions() {
     ].some((value) => value.toLowerCase().includes(query));
   });
 
-  const dailyTransactionGroups = (() => {
-    const ascendingTransactions = [...filteredTransactions].sort((left, right) => {
-      if (left.date === right.date) return left.created_at.localeCompare(right.created_at);
-      return left.date.localeCompare(right.date);
-    });
-
-    const groups = new Map<string, { date: string; transactions: Transaction[]; dayNet: number; runningBalance: number }>();
-    let runningBalance = openingBalance;
-
-    ascendingTransactions.forEach((transaction) => {
-      const signedAmount = getScopedTransactionImpact(transaction);
-      runningBalance += signedAmount;
-
-      const existingGroup = groups.get(transaction.date);
-      if (existingGroup) {
-        existingGroup.transactions.push(transaction);
-        existingGroup.dayNet += signedAmount;
-        existingGroup.runningBalance = runningBalance;
-        return;
+  const selectedMonthStart = selectedMonth ? `${selectedMonth}-01` : '';
+  const monthOpeningBalance = selectedMonth
+    ? openingBalance + accountScopedTransactions
+      .filter((transaction) => transaction.date < selectedMonthStart)
+      .reduce((sum, transaction) => sum + getScopedTransactionImpact(transaction), 0)
+    : openingBalance;
+  const monthNet = monthTransactions.reduce((sum, transaction) => sum + getScopedTransactionImpact(transaction), 0);
+  const monthClosingBalance = monthOpeningBalance + monthNet;
+  const monthIncome = monthTransactions
+    .filter((transaction) => transaction.type === 'Income')
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const monthExpense = monthTransactions
+    .filter((transaction) => transaction.type === 'Expense')
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const monthTransferCount = monthTransactions.filter((transaction) => transaction.type === 'Transfer').length;
+  const expenseAnalysisData = monthTransactions
+    .filter((transaction) => transaction.type === 'Expense')
+    .reduce((acc, transaction) => {
+      const existing = acc.find((item) => item.name === transaction.category);
+      if (existing) {
+        existing.value += transaction.amount;
+      } else {
+        acc.push({ name: transaction.category, value: transaction.amount });
       }
-
-      groups.set(transaction.date, {
-        date: transaction.date,
-        transactions: [transaction],
-        dayNet: signedAmount,
-        runningBalance
-      });
-    });
-
-    return Array.from(groups.values()).sort((left, right) => right.date.localeCompare(left.date));
-  })();
+      return acc;
+    }, [] as { name: string; value: number }[])
+    .sort((left, right) => right.value - left.value);
+  const sortedFilteredTransactions = [...filteredTransactions].sort((left, right) => {
+    if (left.date === right.date) return right.created_at.localeCompare(left.created_at);
+    return right.date.localeCompare(left.date);
+  });
   const selectedTransaction = selectedTransactionId
-    ? transactions.find((transaction) => transaction.id === selectedTransactionId) || null
+    ? filteredTransactions.find((transaction) => transaction.id === selectedTransactionId) || null
     : null;
 
   return (
@@ -348,6 +384,156 @@ export default function Transactions() {
             <Plus size={20} />
             Add Transaction
           </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Opening Balance</p>
+          <div className={`mt-2 text-2xl font-display font-bold ${monthOpeningBalance >= 0 ? 'text-slate-900' : 'text-red-600'}`}>
+            {monthOpeningBalance >= 0 ? '' : '-'}{formatCurrency(monthOpeningBalance)}
+          </div>
+          <p className="mt-2 text-sm text-slate-500">Balance at the start of {selectedMonth ? formatMonthLabel(selectedMonth) : 'this period'}.</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Income vs Expense</p>
+          <div className="mt-2 flex items-end justify-between gap-4">
+            <div>
+              <div className="text-sm text-emerald-600 font-semibold">+{formatCurrency(monthIncome)}</div>
+              <div className="text-sm text-red-600 font-semibold">-{formatCurrency(monthExpense)}</div>
+            </div>
+            <div className={`text-2xl font-display font-bold ${monthIncome - monthExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {monthIncome - monthExpense >= 0 ? '+' : '-'}{formatCurrency(monthIncome - monthExpense)}
+            </div>
+          </div>
+          <p className="mt-2 text-sm text-slate-500">Net flow for the selected month.</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Closing Balance</p>
+          <div className={`mt-2 text-2xl font-display font-bold ${monthClosingBalance >= 0 ? 'text-slate-900' : 'text-red-600'}`}>
+            {monthClosingBalance >= 0 ? '' : '-'}{formatCurrency(monthClosingBalance)}
+          </div>
+          <p className="mt-2 text-sm text-slate-500">After all month activity across the selected scope.</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Activity</p>
+          <div className="mt-2 text-2xl font-display font-bold text-slate-900">{monthTransactions.length}</div>
+          <p className="mt-2 text-sm text-slate-500">{monthTransferCount} transfers and {expenseAnalysisData.length} expense categories in this month.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-6">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-slate-900">
+                <BarChart3 className="text-rose-500" size={18} />
+                <h2 className="text-lg font-display font-bold">Expense Analysis</h2>
+              </div>
+              <p className="text-sm text-slate-500">Category split for {selectedMonth ? formatMonthLabel(selectedMonth) : 'the selected period'}.</p>
+            </div>
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Total Expense</div>
+              <div className="text-xl font-display font-bold text-red-600">-{formatCurrency(monthExpense)}</div>
+            </div>
+          </div>
+
+          {expenseAnalysisData.length > 0 ? (
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] gap-6 items-center">
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={expenseAnalysisData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={72}
+                      outerRadius={108}
+                      paddingAngle={2}
+                    >
+                      {expenseAnalysisData.map((entry, index) => (
+                        <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-3">
+                {expenseAnalysisData.slice(0, 6).map((item, index) => {
+                  const share = monthExpense > 0 ? (item.value / monthExpense) * 100 : 0;
+
+                  return (
+                    <div key={item.name} className="rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span
+                            className="h-3 w-3 rounded-full shrink-0"
+                            style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                          />
+                          <span className="font-medium text-slate-700 truncate">{item.name}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-900">{formatCurrency(item.value)}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">{share.toFixed(1)}% of monthly expenses</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="p-10 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-50 text-slate-400">
+                <BarChart3 size={26} />
+              </div>
+              <h3 className="mt-4 text-lg font-display font-bold text-slate-900">No expenses in this month</h3>
+              <p className="mt-1 text-sm text-slate-500">Pick a different month or add expense transactions to see the breakdown.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 text-slate-900">
+            <CalendarRange className="text-blue-600" size={18} />
+            <h2 className="text-lg font-display font-bold">Month View</h2>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">Select a month to focus the ledger and analytics.</p>
+
+          <div className="mt-5 space-y-4">
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Month</label>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl text-slate-700 px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                {availableMonthKeys.map((monthKey) => (
+                  <option key={monthKey} value={monthKey}>
+                    {formatMonthLabel(monthKey)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Visible transactions</span>
+                <span className="font-semibold text-slate-900">{filteredTransactions.length}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Month total impact</span>
+                <span className={`font-semibold ${monthNet >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {monthNet >= 0 ? '+' : '-'}{formatCurrency(monthNet)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Top spend category</span>
+                <span className="font-semibold text-slate-900">{expenseAnalysisData[0]?.name || 'N/A'}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -384,124 +570,90 @@ export default function Transactions() {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="animate-spin text-blue-600" size={32} />
           </div>
-        ) : dailyTransactionGroups.length > 0 ? (
-          <div className="divide-y divide-slate-100">
-            <div className="px-6 py-4 bg-slate-50/80 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-              <div className="text-sm text-slate-500">
-                Opening balance
-              </div>
-              <div className={`text-sm font-semibold ${openingBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {openingBalance >= 0 ? '' : '-'}{formatCurrency(openingBalance)}
-              </div>
-            </div>
-            {dailyTransactionGroups.map((group) => (
-              <section key={group.date} className="p-6 space-y-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h3 className="text-lg font-display font-bold text-slate-900">{formatGroupDate(group.date)}</h3>
-                    <p className="text-sm text-slate-500">{group.transactions.length} transaction{group.transactions.length > 1 ? 's' : ''}</p>
-                  </div>
-                  <div className="flex flex-col gap-2 md:items-end">
-                    <div className="text-sm text-slate-500">
-                      Day total:{' '}
-                      <span className={`font-semibold ${group.dayNet >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {group.dayNet >= 0 ? '+' : '-'}{formatCurrency(group.dayNet)}
+        ) : sortedFilteredTransactions.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                  <th className="px-4 py-3 font-semibold">Date</th>
+                  <th className="px-4 py-3 font-semibold">Description</th>
+                  <th className="px-4 py-3 font-semibold">Category</th>
+                  <th className="px-4 py-3 font-semibold">Account</th>
+                  <th className="px-4 py-3 font-semibold text-right">Amount</th>
+                  <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedFilteredTransactions.map((transaction) => (
+                  <tr
+                    key={transaction.id}
+                    onClick={() => setSelectedTransactionId(transaction.id)}
+                    className={`cursor-pointer transition-colors group ${
+                      selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <td className="px-4 py-4 text-sm text-slate-500 whitespace-nowrap">
+                      {formatGroupDate(transaction.date)}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="font-semibold text-slate-900">{transaction.description}</div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md font-medium">
+                        {transaction.category}
                       </span>
-                    </div>
-                    <div className="text-sm text-slate-500">
-                      Running balance:{' '}
-                      <span className={`font-semibold ${group.runningBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {group.runningBalance >= 0 ? '' : '-'}{formatCurrency(group.runningBalance)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-                        <th className="px-4 py-3 font-semibold">Description</th>
-                        <th className="px-4 py-3 font-semibold">Category</th>
-                        <th className="px-4 py-3 font-semibold">Account</th>
-                        <th className="px-4 py-3 font-semibold text-right">Amount</th>
-                        <th className="px-4 py-3 font-semibold text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {group.transactions
-                        .slice()
-                        .sort((left, right) => right.created_at.localeCompare(left.created_at))
-                        .map((transaction) => (
-                          <tr
-                            key={transaction.id}
-                            onClick={() => setSelectedTransactionId(transaction.id)}
-                            className={`cursor-pointer transition-colors group ${
-                              selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'
-                            }`}
-                          >
-                            <td className="px-4 py-4">
-                              <div className="font-semibold text-slate-900">{transaction.description}</div>
-                            </td>
-                            <td className="px-4 py-4">
-                              <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md font-medium">
-                                {transaction.category}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4 text-sm text-slate-600">
-                              {getAssetName(transaction.asset_id)}
-                              {transaction.type === 'Transfer' && ` -> ${getAssetName(transaction.to_asset_id)}`}
-                            </td>
-                            <td
-                              className={`px-4 py-4 text-right font-bold ${
-                                transaction.type === 'Income'
-                                  ? 'text-emerald-600'
-                                  : transaction.type === 'Expense'
-                                    ? 'text-red-600'
-                                    : 'text-blue-600'
-                              }`}
-                            >
-                              {transaction.type === 'Income' ? '+' : '-'}
-                              Rs{transaction.amount.toLocaleString('en-IN')}
-                            </td>
-                            <td className="px-4 py-4 text-right">
-                              <div
-                                className={`flex justify-end gap-1 transition-opacity ${
-                                  selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'
-                                }`}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openEditModal(transaction);
-                                  }}
-                                  className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
-                                  aria-label={`Edit ${transaction.description}`}
-                                >
-                                  <Edit2 size={16} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedTransactionId(transaction.id);
-                                    setDeletingTransaction(transaction);
-                                  }}
-                                  className="p-2 text-slate-400 hover:text-red-600 transition-colors"
-                                  aria-label={`Delete ${transaction.description}`}
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            ))}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-slate-600">
+                      {getAssetName(transaction.asset_id)}
+                      {transaction.type === 'Transfer' && ` -> ${getAssetName(transaction.to_asset_id)}`}
+                    </td>
+                    <td
+                      className={`px-4 py-4 text-right font-bold ${
+                        transaction.type === 'Income'
+                          ? 'text-emerald-600'
+                          : transaction.type === 'Expense'
+                            ? 'text-red-600'
+                            : 'text-blue-600'
+                      }`}
+                    >
+                      {transaction.type === 'Income' ? '+' : '-'}
+                      Rs{transaction.amount.toLocaleString('en-IN')}
+                    </td>
+                    <td className="px-4 py-4 text-right">
+                      <div
+                        className={`flex justify-end gap-1 transition-opacity ${
+                          selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditModal(transaction);
+                          }}
+                          className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                          aria-label={`Edit ${transaction.description}`}
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedTransactionId(transaction.id);
+                            setDeletingTransaction(transaction);
+                          }}
+                          className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                          aria-label={`Delete ${transaction.description}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className="py-20 text-center">
@@ -509,10 +661,10 @@ export default function Transactions() {
               <ArrowRightLeft size={32} />
             </div>
             <h3 className="text-lg font-display font-bold text-slate-900">
-              {transactions.length > 0 ? 'No transactions match this filter' : 'No transactions yet'}
+              {transactions.length > 0 ? 'No transactions in this month' : 'No transactions yet'}
             </h3>
             <p className="text-slate-500 mt-1">
-              {transactions.length > 0 ? 'Try a different account or search term.' : 'Start tracking your spending and income.'}
+              {transactions.length > 0 ? 'Try a different month, account, or search term.' : 'Start tracking your spending and income.'}
             </p>
           </div>
         )}

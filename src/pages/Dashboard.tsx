@@ -1,21 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Plus, 
-  ArrowUpRight, 
-  Wallet, 
+import {
+  TrendingUp,
+  TrendingDown,
+  Plus,
+  ArrowUpRight,
+  Wallet,
   PieChart as PieChartIcon,
   ChevronRight
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   ResponsiveContainer,
   PieChart,
   Pie,
@@ -23,15 +23,19 @@ import {
 } from 'recharts';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { Asset, Investment } from '../types';
+import { Asset, Investment, Loan, LoanPayment } from '../types';
 
 const COLORS = ['#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316'];
+const formatCurrency = (value: number) => `Rs${Math.round(value).toLocaleString('en-IN')}`;
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [investments, setInvestments] = useState<Investment[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [loanPayments, setLoanPayments] = useState<LoanPayment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [overviewMode, setOverviewMode] = useState<'netWorth' | 'assetsOnly'>('netWorth');
 
   useEffect(() => {
     fetchData();
@@ -39,16 +43,22 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      const [assetsRes, invRes] = await Promise.all([
+      const [assetsRes, invRes, loansRes, loanPaymentsRes] = await Promise.all([
         supabase.from('assets').select('*'),
-        supabase.from('investments').select('*')
+        supabase.from('investments').select('*'),
+        supabase.from('loans').select('*'),
+        supabase.from('loan_payments').select('*')
       ]);
-      
+
       if (assetsRes.error) throw assetsRes.error;
       if (invRes.error) throw invRes.error;
+      if (loansRes.error) throw loansRes.error;
+      if (loanPaymentsRes.error) throw loanPaymentsRes.error;
 
       setAssets(assetsRes.data || []);
       setInvestments(invRes.data || []);
+      setLoans(loansRes.data || []);
+      setLoanPayments(loanPaymentsRes.data || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -59,55 +69,90 @@ export default function Dashboard() {
   const assetsTotal = assets.reduce((sum, asset) => sum + asset.value, 0);
   const investmentsTotal = investments.reduce((sum, inv) => sum + inv.current_value, 0);
   const totalInvested = investments.reduce((sum, inv) => sum + (inv.invested_value || 0), 0);
-  const totalNetWorth = assetsTotal + investmentsTotal;
+  const grossAssetValue = assetsTotal + investmentsTotal;
+  const totalLoanOutstanding = loans.reduce((sum, loan) => {
+    const relatedPayments = loanPayments.filter((payment) => payment.loan_id === loan.id);
+    const totalPrincipalPaid = relatedPayments.reduce((paymentSum, payment) => paymentSum + payment.principal_component, 0);
+    const totalPrepaid = relatedPayments.reduce((paymentSum, payment) => paymentSum + payment.prepayment_amount, 0);
+    return sum + Math.max(loan.loan_amount - totalPrincipalPaid - totalPrepaid, 0);
+  }, 0);
+  const totalNetWorth = grossAssetValue - totalLoanOutstanding;
+  const displayValue = overviewMode === 'netWorth' ? totalNetWorth : grossAssetValue;
   const totalProfit = investmentsTotal - totalInvested;
   const profitPercent = totalInvested > 0 ? (totalProfit / totalInvested) * 100 : 0;
 
-  // Generate dynamic history based on current total (mocking growth)
   const dynamicHistory = [
-    { date: 'Oct', value: totalNetWorth * 0.85 },
-    { date: 'Nov', value: totalNetWorth * 0.88 },
-    { date: 'Dec', value: totalNetWorth * 0.92 },
-    { date: 'Jan', value: totalNetWorth * 0.95 },
-    { date: 'Feb', value: totalNetWorth * 0.98 },
-    { date: 'Mar', value: totalNetWorth },
+    { date: 'Oct', value: displayValue * 0.85 },
+    { date: 'Nov', value: displayValue * 0.88 },
+    { date: 'Dec', value: displayValue * 0.92 },
+    { date: 'Jan', value: displayValue * 0.95 },
+    { date: 'Feb', value: displayValue * 0.98 },
+    { date: 'Mar', value: displayValue }
   ];
 
   const allocationData = [
-    ...assets.reduce((acc: any[], asset) => {
-      const existing = acc.find(a => a.name === asset.type);
+    ...assets.reduce((acc: { name: string; value: number }[], asset) => {
+      const existing = acc.find((item) => item.name === asset.type);
       if (existing) existing.value += asset.value;
       else acc.push({ name: asset.type, value: asset.value });
       return acc;
     }, []),
-    ...investments.reduce((acc: any[], inv) => {
-      const existing = acc.find(a => a.name === inv.type);
+    ...investments.reduce((acc: { name: string; value: number }[], inv) => {
+      const existing = acc.find((item) => item.name === inv.type);
       if (existing) existing.value += inv.current_value;
       else acc.push({ name: inv.type, value: inv.current_value });
       return acc;
     }, [])
   ].sort((a, b) => b.value - a.value);
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-display font-bold text-zinc-900">Dashboard</h1>
           <p className="text-zinc-500">Welcome back! Here's your financial overview.</p>
         </div>
-        <button 
-          onClick={() => navigate('/assets')}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
-        >
-          <Plus size={20} />
-          Add Asset
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setOverviewMode('netWorth')}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                overviewMode === 'netWorth' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Net Worth
+            </button>
+            <button
+              type="button"
+              onClick={() => setOverviewMode('assetsOnly')}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                overviewMode === 'assetsOnly' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Asset Value
+            </button>
+          </div>
+          <button
+            onClick={() => navigate('/assets')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+          >
+            <Plus size={20} />
+            Add Asset
+          </button>
+        </div>
       </div>
 
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <motion.div 
+        <motion.div
           whileHover={{ y: -4 }}
           className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"
         >
@@ -120,13 +165,20 @@ export default function Dashboard() {
               {Math.abs(profitPercent).toFixed(1)}%
             </span>
           </div>
-          <p className="text-sm text-slate-500 font-medium">Total Net Worth</p>
+          <p className="text-sm text-slate-500 font-medium">
+            {overviewMode === 'netWorth' ? 'Total Net Worth' : 'Total Asset Value'}
+          </p>
           <h2 className="text-2xl font-display font-bold mt-1">
-            ₹{totalNetWorth.toLocaleString('en-IN')}
+            {formatCurrency(displayValue)}
           </h2>
+          <p className="mt-2 text-xs text-slate-500">
+            {overviewMode === 'netWorth'
+              ? `Includes loan outstanding of ${formatCurrency(totalLoanOutstanding)}`
+              : 'Gross assets before loan liabilities'}
+          </p>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           whileHover={{ y: -4 }}
           className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm"
         >
@@ -137,11 +189,11 @@ export default function Dashboard() {
           </div>
           <p className="text-sm text-zinc-500 font-medium">Total Profit/Loss</p>
           <h2 className={`text-2xl font-display font-bold mt-1 ${totalProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-            {totalProfit >= 0 ? '+' : '-'}₹{Math.abs(totalProfit).toLocaleString('en-IN')}
+            {totalProfit >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totalProfit))}
           </h2>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           whileHover={{ y: -4 }}
           className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm"
         >
@@ -154,15 +206,23 @@ export default function Dashboard() {
           <h2 className="text-2xl font-display font-bold mt-1">
             {allocationData.length} Active
           </h2>
+          <p className="mt-2 text-xs text-slate-500">
+            {loans.length} loan{loans.length === 1 ? '' : 's'} tracked
+          </p>
         </motion.div>
       </div>
 
-      {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Net Worth History */}
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="font-display font-bold text-lg">Net Worth Growth</h3>
+          <div className="flex items-center justify-between mb-6 gap-4">
+            <div>
+              <h3 className="font-display font-bold text-lg">
+                {overviewMode === 'netWorth' ? 'Net Worth Growth' : 'Asset Value Growth'}
+              </h3>
+              <p className="text-sm text-slate-500">
+                {overviewMode === 'netWorth' ? 'Loans outstanding are deducted from the headline total.' : 'Viewing gross assets only.'}
+              </p>
+            </div>
             <select className="text-sm bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1 outline-none">
               <option>Last 6 Months</option>
               <option>Last Year</option>
@@ -174,43 +234,43 @@ export default function Dashboard() {
               <AreaChart data={dynamicHistory}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis 
-                  dataKey="date" 
-                  axisLine={false} 
-                  tickLine={false} 
+                <XAxis
+                  dataKey="date"
+                  axisLine={false}
+                  tickLine={false}
                   tick={{ fill: '#64748b', fontSize: 12 }}
                   dy={10}
                 />
-                <YAxis 
-                  hide 
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    borderRadius: '12px', 
-                    border: 'none', 
-                    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' 
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: '12px',
+                    border: 'none',
+                    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'
                   }}
-                  formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, 'Net Worth']}
+                  formatter={(value: number) => [
+                    formatCurrency(value),
+                    overviewMode === 'netWorth' ? 'Net Worth' : 'Asset Value'
+                  ]}
                 />
-                <Area 
-                  type="monotone" 
-                  dataKey="value" 
-                  stroke="#3b82f6" 
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#3b82f6"
                   strokeWidth={3}
-                  fillOpacity={1} 
-                  fill="url(#colorValue)" 
+                  fillOpacity={1}
+                  fill="url(#colorValue)"
                 />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Asset Allocation */}
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
           <h3 className="font-display font-bold text-lg mb-6">Asset Allocation</h3>
           <div className="flex flex-col md:flex-row items-center gap-8">
@@ -230,8 +290,8 @@ export default function Dashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip 
-                    formatter={(value: number) => `₹${value.toLocaleString('en-IN')}`}
+                  <Tooltip
+                    formatter={(value: number) => formatCurrency(value)}
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   />
                 </PieChart>
@@ -245,7 +305,7 @@ export default function Dashboard() {
                     <span className="text-sm text-zinc-600">{item.name}</span>
                   </div>
                   <span className="text-sm font-semibold">
-                    {totalNetWorth > 0 ? Math.round((item.value / totalNetWorth) * 100) : 0}%
+                    {grossAssetValue > 0 ? Math.round((item.value / grossAssetValue) * 100) : 0}%
                   </span>
                 </div>
               ))}
@@ -257,7 +317,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Recent Assets */}
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
           <h3 className="font-display font-bold text-lg">Your Assets</h3>
@@ -287,7 +346,7 @@ export default function Dashboard() {
                     </span>
                   </td>
                   <td className="px-6 py-4 font-medium">
-                    ₹{asset.value.toLocaleString('en-IN')}
+                    {formatCurrency(asset.value)}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button className="text-zinc-400 hover:text-emerald-600 transition-colors">
