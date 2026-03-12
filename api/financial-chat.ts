@@ -1,6 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
 import { getApiKey } from './_lib/env';
 export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -31,7 +31,6 @@ export async function POST(request: Request) {
       .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`)
       .join('\n\n');
 
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
     const prompt = [
       'You are FinDol Copilot, an in-app financial assistant.',
       'Use the provided user financial context when relevant.',
@@ -48,13 +47,42 @@ export async function POST(request: Request) {
       .filter(Boolean)
       .join('\n\n');
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite',
-      contents: prompt,
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${encodeURIComponent(getApiKey())}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+        }),
+      }
+    );
+
+    const data = (await response.json()) as {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{ text?: string }>;
+        };
+      }>;
+      error?: { message?: string };
+    };
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Gemini request failed');
+    }
+
+    const reply = data.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || '')
+      .join('')
+      .trim();
 
     return json({
-      reply: response.text?.trim() || 'I could not generate a response.',
+      reply: reply || 'I could not generate a response.',
     });
   } catch (error: any) {
     console.error('Error in financial chat:', error);
