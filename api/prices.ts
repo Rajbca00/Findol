@@ -1,16 +1,18 @@
 import YahooFinance from 'yahoo-finance2';
-import { sendMethodNotAllowed } from './_lib/http';
 
 const yahooFinance = new YahooFinance();
+export const runtime = 'nodejs';
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== 'GET') {
-    return sendMethodNotAllowed(res, ['GET']);
-  }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 
-  const tickers = req.query?.tickers as string | undefined;
+export async function GET(request: Request) {
+  const tickers = new URL(request.url).searchParams.get('tickers') || undefined;
   if (!tickers) {
-    return res.status(400).json({ error: 'Tickers are required' });
+    return json({ error: 'Tickers are required' }, 400);
   }
 
   const tickerList = tickers
@@ -36,10 +38,13 @@ export default async function handler(req: any, res: any) {
       })
     );
 
-    return res.status(200).json(results);
+    return json(results);
   } catch (error) {
     console.error('Error fetching prices:', error);
-    return res.status(500).json({ error: 'Failed to fetch prices' });
+    return json({ error: 'Failed to fetch prices' }, 500);
   }
 }
 
+export async function POST() {
+  return json({ error: 'Method not allowed' }, 405);
+}

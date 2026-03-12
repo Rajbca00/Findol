@@ -1,19 +1,28 @@
 import { GoogleGenAI } from '@google/genai';
 import { getApiKey } from './_lib/env';
-import { sendMethodNotAllowed } from './_lib/http';
+export const runtime = 'nodejs';
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== 'POST') {
-    return sendMethodNotAllowed(res, ['POST']);
-  }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 
-  const { messages, context } = req.body as {
+export async function POST(request: Request) {
+  let payload: {
     messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
     context?: unknown;
   };
 
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { messages, context } = payload;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'Messages are required' });
+    return json({ error: 'Messages are required' }, 400);
   }
 
   try {
@@ -44,12 +53,15 @@ export default async function handler(req: any, res: any) {
       contents: prompt,
     });
 
-    return res.status(200).json({
+    return json({
       reply: response.text?.trim() || 'I could not generate a response.',
     });
   } catch (error: any) {
     console.error('Error in financial chat:', error);
-    return res.status(500).json({ error: error?.message || 'Financial chat failed' });
+    return json({ error: error?.message || 'Financial chat failed' }, 500);
   }
 }
 
+export async function GET() {
+  return json({ error: 'Method not allowed' }, 405);
+}

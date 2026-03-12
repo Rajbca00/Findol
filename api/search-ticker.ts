@@ -1,18 +1,20 @@
 import { GoogleGenAI } from '@google/genai';
 import YahooFinance from 'yahoo-finance2';
 import { getApiKey } from './_lib/env';
-import { sendMethodNotAllowed } from './_lib/http';
 
 const yahooFinance = new YahooFinance();
+export const runtime = 'nodejs';
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== 'GET') {
-    return sendMethodNotAllowed(res, ['GET']);
-  }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 
-  const query = req.query?.q as string | undefined;
+export async function GET(request: Request) {
+  const query = new URL(request.url).searchParams.get('q') || undefined;
   if (!query) {
-    return res.status(400).json({ error: 'Query is required' });
+    return json({ error: 'Query is required' }, 400);
   }
 
   try {
@@ -40,7 +42,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (bestMatch?.symbol) {
-      return res.status(200).json({
+      return json({
         ticker: bestMatch.symbol,
         name: bestMatch.shortname || bestMatch.longname || bestMatch.symbol,
         source: 'yahoo',
@@ -74,13 +76,16 @@ If you can't find it, return {"ticker": null, "name": null}.`;
     }
 
     if (geminiResult?.ticker) {
-      return res.status(200).json({ ...geminiResult, source: 'gemini' });
+      return json({ ...geminiResult, source: 'gemini' });
     }
 
-    return res.status(404).json({ error: 'Ticker not found' });
+    return json({ error: 'Ticker not found' }, 404);
   } catch (error: any) {
     console.error('Error searching ticker:', error);
-    return res.status(500).json({ error: error?.message || 'Search failed' });
+    return json({ error: error?.message || 'Search failed' }, 500);
   }
 }
 
+export async function POST() {
+  return json({ error: 'Method not allowed' }, 405);
+}
