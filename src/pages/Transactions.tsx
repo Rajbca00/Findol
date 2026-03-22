@@ -358,6 +358,21 @@ export default function Transactions() {
     if (left.date === right.date) return right.created_at.localeCompare(left.created_at);
     return right.date.localeCompare(left.date);
   });
+
+  // Running balance: compute from oldest to newest starting at monthOpeningBalance
+  const runningBalances: Record<string, number> = {};
+  let runningBal = monthOpeningBalance;
+  const chronoTransactions = [...sortedFilteredTransactions].reverse();
+  for (const tx of chronoTransactions) {
+    runningBal += getScopedTransactionImpact(tx);
+    runningBalances[tx.id] = runningBal;
+  }
+
+  // Daily groups (newest date first)
+  const dateGroups = Array.from(
+    new Set(sortedFilteredTransactions.map((tx) => tx.date))
+  ).sort((a, b) => b.localeCompare(a));
+
   const selectedTransaction = selectedTransactionId
     ? filteredTransactions.find((transaction) => transaction.id === selectedTransactionId) || null
     : null;
@@ -569,80 +584,114 @@ export default function Transactions() {
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-                  <th className="px-4 py-3 font-semibold">Date</th>
                   <th className="px-4 py-3 font-semibold">Description</th>
                   <th className="px-4 py-3 font-semibold">Category</th>
                   <th className="px-4 py-3 font-semibold">Account</th>
                   <th className="px-4 py-3 font-semibold text-right">Amount</th>
+                  <th className="px-4 py-3 font-semibold text-right">Balance</th>
                   <th className="px-4 py-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sortedFilteredTransactions.map((transaction) => (
-                  <tr
-                    key={transaction.id}
-                    onClick={() => setSelectedTransactionId(transaction.id)}
-                    className={`cursor-pointer transition-colors group ${selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'
-                      }`}
-                  >
-                    <td className="px-4 py-4 text-sm text-slate-500 whitespace-nowrap">
-                      {formatGroupDate(transaction.date)}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="font-semibold text-slate-900">{transaction.description}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md font-medium">
-                        {transaction.category}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-sm text-slate-600">
-                      {getAssetName(transaction.asset_id)}
-                      {transaction.type === 'Transfer' && ` -> ${getAssetName(transaction.to_asset_id)}`}
-                    </td>
-                    <td
-                      className={`px-4 py-4 text-right font-bold ${transaction.type === 'Income'
-                          ? 'text-emerald-600'
-                          : transaction.type === 'Expense'
-                            ? 'text-red-600'
-                            : 'text-blue-600'
-                        }`}
-                    >
-                      {transaction.type === 'Income' ? '+' : '-'}
-                      Rs{transaction.amount.toLocaleString('en-IN')}
-                    </td>
-                    <td className="px-4 py-4 text-right">
-                      <div
-                        className={`flex justify-end gap-1 transition-opacity ${selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'
-                          }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditModal(transaction);
-                          }}
-                          className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
-                          aria-label={`Edit ${transaction.description}`}
+              <tbody>
+                {dateGroups.map((date) => {
+                  const dayTxs = sortedFilteredTransactions.filter((tx) => tx.date === date);
+                  const dayIncome = dayTxs.filter((tx) => tx.type === 'Income').reduce((s, tx) => s + tx.amount, 0);
+                  const dayExpense = dayTxs.filter((tx) => tx.type === 'Expense').reduce((s, tx) => s + tx.amount, 0);
+                  const dayNet = dayTxs.reduce((s, tx) => s + getScopedTransactionImpact(tx), 0);
+                  const dayClosingBalance = runningBalances[dayTxs[0].id];
+
+                  return (
+                    <React.Fragment key={date}>
+                      <tr className="bg-slate-50/80 border-y border-slate-200">
+                        <td colSpan={3} className="px-4 py-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                            {formatGroupDate(date)}
+                          </span>
+                          {dayIncome > 0 && (
+                            <span className="ml-3 text-xs font-semibold text-emerald-600">+{formatCurrency(dayIncome)}</span>
+                          )}
+                          {dayExpense > 0 && (
+                            <span className="ml-2 text-xs font-semibold text-red-500">-{formatCurrency(dayExpense)}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <span className={`text-xs font-bold ${dayNet >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {dayNet >= 0 ? '+' : '-'}{formatCurrency(dayNet)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <span className={`text-xs font-semibold ${dayClosingBalance >= 0 ? 'text-slate-600' : 'text-red-600'}`}>
+                            {dayClosingBalance >= 0 ? '' : '-'}{formatCurrency(dayClosingBalance)}
+                          </span>
+                        </td>
+                        <td />
+                      </tr>
+                      {dayTxs.map((transaction) => (
+                        <tr
+                          key={transaction.id}
+                          onClick={() => setSelectedTransactionId(transaction.id)}
+                          className={`cursor-pointer transition-colors group border-b border-slate-100 ${selectedTransactionId === transaction.id ? 'bg-blue-50/80' : 'hover:bg-slate-50'}`}
                         >
-                          <Edit2 size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedTransactionId(transaction.id);
-                            setDeletingTransaction(transaction);
-                          }}
-                          className="p-2 text-slate-400 hover:text-red-600 transition-colors"
-                          aria-label={`Delete ${transaction.description}`}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-slate-900">{transaction.description}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md font-medium">
+                              {transaction.category}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-600">
+                            {getAssetName(transaction.asset_id)}
+                            {transaction.type === 'Transfer' && ` → ${getAssetName(transaction.to_asset_id)}`}
+                          </td>
+                          <td
+                            className={`px-4 py-3 text-right font-bold ${transaction.type === 'Income'
+                                ? 'text-emerald-600'
+                                : transaction.type === 'Expense'
+                                  ? 'text-red-600'
+                                  : 'text-blue-600'
+                              }`}
+                          >
+                            {transaction.type === 'Income' ? '+' : '-'}
+                            Rs{transaction.amount.toLocaleString('en-IN')}
+                          </td>
+                          <td className={`px-4 py-3 text-right text-sm font-semibold ${runningBalances[transaction.id] >= 0 ? 'text-slate-700' : 'text-red-600'}`}>
+                            {runningBalances[transaction.id] >= 0 ? '' : '-'}{formatCurrency(runningBalances[transaction.id])}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div
+                              className={`flex justify-end gap-1 transition-opacity ${selectedTransactionId === transaction.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'}`}
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditModal(transaction);
+                                }}
+                                className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                                aria-label={`Edit ${transaction.description}`}
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTransactionId(transaction.id);
+                                  setDeletingTransaction(transaction);
+                                }}
+                                className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                                aria-label={`Delete ${transaction.description}`}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
